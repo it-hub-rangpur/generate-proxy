@@ -8,7 +8,7 @@ PROXY_PASSWORD="it-hub$password"            # Password
 SQUID_CONF="/etc/squid/squid.conf"          # Squid config path
 PASSWORD_FILE="/etc/squid/passwords"        # Auth file path
 OUTPUT_FILE="squid_https_proxies.txt"       # Output proxy list
-DEFAULT_PORT=443                            # Squid HTTPS port
+DEFAULT_PORT=7771                           # Squid HTTPS port
 SSL_CERT_DIR="/etc/squid/ssl_cert"          # SSL certificate directory
 
 # Install Squid if not exists
