@@ -1,14 +1,22 @@
 #!/bin/bash
 
 # Configuration
-PROXY_IP=$(hostname -I | awk '{print $1}')  # Your server's main IP
-START_PORT=5000                             # Starting port for proxies
+START_IP="192.168.0.1"                      # Starting IP for proxies
 NUM_PROXIES=500                             # Number of proxies to generate
 PROXY_USER_PREFIX="ithub"                   # Username prefix
 PROXY_PASSWORD="it-hub$password"            # Password
 SQUID_CONF="/etc/squid/squid.conf"          # Squid config path
 PASSWORD_FILE="/etc/squid/passwords"        # Auth file path
 OUTPUT_FILE="squid_proxies.txt"             # Output proxy list
+DEFAULT_PORT=7771                           # Squid default port
+
+# Function to generate an IP address
+generate_ip() {
+    local ip_num=$1
+    local IFS=.
+    read -r i1 i2 i3 i4 <<<"$START_IP"
+    echo "$i1.$i2.$i3.$((i4 + ip_num))"
+}
 
 # Install Squid if not exists
 if ! command -v squid &> /dev/null; then
@@ -22,9 +30,10 @@ sudo cp "$SQUID_CONF" "$SQUID_CONF.bak"
 
 # Configure Squid
 echo "[+] Configuring Squid..."
-sudo tee "$SQUID_CONF" > /dev/null <<EOL
-http_port $START_PORT-$((START_PORT + NUM_PROXIES - 1))
+{
+    echo "http_port $DEFAULT_PORT"
 
+    cat <<EOL
 auth_param basic program /usr/lib/squid/basic_ncsa_auth $PASSWORD_FILE
 auth_param basic realm proxy
 acl authenticated proxy_auth REQUIRED
@@ -37,6 +46,7 @@ http_access deny all
 maximum_object_size 256 MB
 cache_dir ufs /var/spool/squid 5000 16 256
 EOL
+} | sudo tee "$SQUID_CONF" > /dev/null
 
 # Generate users and passwords
 echo "[+] Generating $NUM_PROXIES proxy users..."
@@ -47,14 +57,14 @@ sudo chmod 640 "$PASSWORD_FILE"
 > "$OUTPUT_FILE"  # Clear output file
 
 for ((i=1; i<=NUM_PROXIES; i++)); do
-    PORT=$((START_PORT + i - 1))
+    IP=$(generate_ip $i)
     USERNAME="${PROXY_USER_PREFIX}${i}"
     
     # Add user to Squid auth
     echo "$USERNAME:$(openssl passwd -apr1 "$PROXY_PASSWORD")" | sudo tee -a "$PASSWORD_FILE" > /dev/null
     
     # Add to proxy list
-    echo "http://$USERNAME:$PROXY_PASSWORD@$PROXY_IP:$PORT" >> "$OUTPUT_FILE"
+    echo "http://$USERNAME:$PROXY_PASSWORD@$IP:$DEFAULT_PORT" >> "$OUTPUT_FILE"
 done
 
 # Restart Squid
@@ -62,9 +72,9 @@ echo "[+] Restarting Squid..."
 sudo squid -k parse
 sudo systemctl restart squid
 
-# Open firewall ports
-echo "[+] Opening firewall ports $START_PORT-$((START_PORT + NUM_PROXIES - 1))..."
-sudo ufw allow "$START_PORT:$((START_PORT + NUM_PROXIES - 1))/tcp"
+# Open firewall port
+echo "[+] Opening firewall port $DEFAULT_PORT..."
+sudo ufw allow "$DEFAULT_PORT/tcp"
 
 # Output results
 echo -e "\n[✅] Generated $NUM_PROXIES Squid proxies!"
