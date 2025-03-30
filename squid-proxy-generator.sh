@@ -8,7 +8,7 @@ PROXY_PASSWORD="it-hub$password"            # Password
 SQUID_CONF="/etc/squid/squid.conf"          # Squid config path
 PASSWORD_FILE="/etc/squid/passwords"        # Auth file path
 OUTPUT_FILE="squid_https_proxies.txt"       # Output proxy list
-DEFAULT_PORT=7771                           # Squid HTTPS port
+DEFAULT_PORT=3128                           # Squid HTTPS port
 SSL_CERT_DIR="/etc/squid/ssl_cert"          # SSL certificate directory
 
 # Install Squid if not exists
@@ -34,7 +34,7 @@ sudo cp "$SQUID_CONF" "$SQUID_CONF.bak"
 # Configure Squid
 echo "[+] Configuring Squid..."
 {
-    echo "http_port 3128"
+    echo "http_port 3128 ssl-bump cert=$SSL_CERT_DIR/squid.pem key=$SSL_CERT_DIR/squid.key"
     echo "https_port $DEFAULT_PORT cert=$SSL_CERT_DIR/squid.pem key=$SSL_CERT_DIR/squid.key"
 
     cat <<EOL
@@ -49,6 +49,11 @@ http_access deny all
 # Recommended optimizations
 maximum_object_size 256 MB
 cache_dir ufs /var/spool/squid 5000 16 256
+
+# SSL Bump configuration
+acl step1 at_step SslBump1
+ssl_bump peek step1
+ssl_bump bump all
 EOL
 } | sudo tee "$SQUID_CONF" > /dev/null
 
