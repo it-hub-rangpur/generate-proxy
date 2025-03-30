@@ -24,6 +24,9 @@ fi
 # Backup original config
 sudo cp "$SQUID_CONF" "$SQUID_CONF.bak"
 
+# Clear existing passwords
+sudo truncate -s 0 "$PASSWORD_FILE"
+
 # Configure Squid
 echo "[+] Configuring Squid..."
 {
