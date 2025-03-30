@@ -1,22 +1,15 @@
 #!/bin/bash
 
 # Configuration
-START_IP="192.168.0.1"                      # Starting IP for proxies
+PROXY_IP=$(curl -s ifconfig.me)             # Your server's public IP
 NUM_PROXIES=500                             # Number of proxies to generate
 PROXY_USER_PREFIX="ithub"                   # Username prefix
 PROXY_PASSWORD="it-hub$password"            # Password
 SQUID_CONF="/etc/squid/squid.conf"          # Squid config path
 PASSWORD_FILE="/etc/squid/passwords"        # Auth file path
-OUTPUT_FILE="squid_proxies.txt"             # Output proxy list
-DEFAULT_PORT=7771                           # Squid default port
-
-# Function to generate an IP address
-generate_ip() {
-    local ip_num=$1
-    local IFS=.
-    read -r i1 i2 i3 i4 <<<"$START_IP"
-    echo "$i1.$i2.$i3.$((i4 + ip_num))"
-}
+OUTPUT_FILE="squid_https_proxies.txt"       # Output proxy list
+DEFAULT_PORT=443                            # Squid HTTPS port
+SSL_CERT_DIR="/etc/squid/ssl_cert"          # SSL certificate directory
 
 # Install Squid if not exists
 if ! command -v squid &> /dev/null; then
@@ -25,13 +18,24 @@ if ! command -v squid &> /dev/null; then
     sudo apt install squid apache2-utils -y
 fi
 
+# Generate SSL certificates
+echo "[+] Generating SSL certificates..."
+sudo mkdir -p "$SSL_CERT_DIR"
+cd "$SSL_CERT_DIR"
+sudo openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
+    -keyout squid.key -out squid.crt \
+    -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=$PROXY_IP"
+sudo cat squid.key squid.crt | sudo tee squid.pem
+sudo chmod 600 squid.pem
+
 # Backup original config
 sudo cp "$SQUID_CONF" "$SQUID_CONF.bak"
 
 # Configure Squid
 echo "[+] Configuring Squid..."
 {
-    echo "http_port $DEFAULT_PORT"
+    echo "http_port 3128"
+    echo "https_port $DEFAULT_PORT cert=$SSL_CERT_DIR/squid.pem key=$SSL_CERT_DIR/squid.key"
 
     cat <<EOL
 auth_param basic program /usr/lib/squid/basic_ncsa_auth $PASSWORD_FILE
@@ -57,14 +61,13 @@ sudo chmod 640 "$PASSWORD_FILE"
 > "$OUTPUT_FILE"  # Clear output file
 
 for ((i=1; i<=NUM_PROXIES; i++)); do
-    IP=$(generate_ip $i)
     USERNAME="${PROXY_USER_PREFIX}${i}"
     
     # Add user to Squid auth
     echo "$USERNAME:$(openssl passwd -apr1 "$PROXY_PASSWORD")" | sudo tee -a "$PASSWORD_FILE" > /dev/null
     
     # Add to proxy list
-    echo "http://$USERNAME:$PROXY_PASSWORD@$IP:$DEFAULT_PORT" >> "$OUTPUT_FILE"
+    echo "https://$USERNAME:$PROXY_PASSWORD@$PROXY_IP:$DEFAULT_PORT" >> "$OUTPUT_FILE"
 done
 
 # Restart Squid
@@ -77,7 +80,7 @@ echo "[+] Opening firewall port $DEFAULT_PORT..."
 sudo ufw allow "$DEFAULT_PORT/tcp"
 
 # Output results
-echo -e "\n[✅] Generated $NUM_PROXIES Squid proxies!"
+echo -e "\n[✅] Generated $NUM_PROXIES Squid HTTPS proxies!"
 echo -e "[📋] Proxy list saved to: $OUTPUT_FILE\n"
 echo "=== Sample Proxies ==="
 head -n 5 "$OUTPUT_FILE"
