@@ -8,31 +8,38 @@ PROXY_PASSWORD="it-hub"
 SQUID_CONF="/etc/squid/squid.conf"
 PASSWORD_FILE="/etc/squid/passwords"
 
-# Get main IP if not set
-if [ -z "$PROXY_IP" ]; then
-    MAIN_IP=$(hostname -I | awk '{print $1}')
-else
-    MAIN_IP="$PROXY_IP"
-fi
+# Function to completely remove Squid
+remove_squid() {
+    echo "[+] Completely removing Squid and all configurations..."
+    sudo systemctl stop squid 2>/dev/null || true
+    sudo apt remove --purge squid squid-common -y
+    sudo rm -rf /etc/squid
+    sudo rm -rf /var/spool/squid
+    sudo rm -f /etc/apt/sources.list.d/squid*
+    sudo apt autoremove -y
+    echo "[√] Squid completely removed."
+}
 
-# Install Squid if needed
-if ! command -v squid &> /dev/null; then
-    echo "[+] Installing Squid..."
+# Install fresh Squid
+install_squid() {
+    echo "[+] Installing fresh Squid..."
     sudo apt update
     sudo apt install squid apache2-utils -y
-    sudo systemctl enable squid
-fi
+    sudo systemctl stop squid
+}
 
-# Backup old config
-echo "[+] Backing up old configuration..."
-sudo cp "$SQUID_CONF" "$SQUID_CONF.bak"
+# Configure fresh Squid
+configure_squid() {
+    echo "[+] Creating optimized configuration..."
 
-# Create optimized configuration
-echo "[+] Creating optimized configuration..."
-cat <<EOL | sudo tee "$SQUID_CONF" > /dev/null
+    # Create minimal config directory
+    sudo mkdir -p /etc/squid/conf.d/
+    sudo chown -R proxy:proxy /etc/squid
+
+    cat <<EOL | sudo tee "$SQUID_CONF" > /dev/null
 http_port $MAIN_IP:$PROXY_PORT
 
-# COMPLETE DISABLE CACHING - PASSTHROUGH MODE
+# Minimal configuration for maximum speed
 cache deny all
 maximum_object_size 0 KB
 minimum_object_size 0 KB
@@ -44,70 +51,92 @@ acl authenticated proxy_auth REQUIRED
 http_access allow authenticated
 http_access deny all
 
-# Performance tuning
+# Performance
 max_filedescriptors 65535
 workers 4
 
-# Timeouts (shorter for better performance)
-forward_timeout 30 seconds
-connect_timeout 15 seconds
+# Timeouts
+connect_timeout 30 seconds
 read_timeout 300 seconds
-client_lifetime 1 hour
 
-# Security headers
+# Security
 via off
 forwarded_for delete
 request_header_access Via deny all
 request_header_access X-Forwarded-For deny all
 request_header_access Referer deny all
-
-# Bypass proxy for local traffic
-acl localnet src 0.0.0.1-0.255.255.255
-acl localnet src 10.0.0.0/8
-acl localnet src 100.64.0.0/10
-acl localnet src 169.254.0.0/16
-acl localnet src 172.16.0.0/12
-acl localnet src 192.168.0.0/16
-acl localnet src fc00::/7
-acl localnet src fe80::/10
-http_access allow localnet
 EOL
 
-# Create password file
-echo "[+] Creating authentication user..."
-sudo htpasswd -b -c "$PASSWORD_FILE" "$PROXY_USER" "$PROXY_PASSWORD"
-sudo chown proxy:proxy "$PASSWORD_FILE"
-sudo chmod 640 "$PASSWORD_FILE"
+    # Create password file
+    echo "[+] Creating authentication user..."
+    sudo htpasswd -b -c "$PASSWORD_FILE" "$PROXY_USER" "$PROXY_PASSWORD"
+    sudo chown proxy:proxy "$PASSWORD_FILE"
+    sudo chmod 640 "$PASSWORD_FILE"
+}
 
-# Apply system optimizations
-echo "[+] Applying system optimizations..."
-echo "net.core.rmem_max=1048576" | sudo tee -a /etc/sysctl.conf
-echo "net.core.wmem_max=1048576" | sudo tee -a /etc/sysctl.conf
-echo "net.ipv4.tcp_rmem=4096 1048576 1048576" | sudo tee -a /etc/sysctl.conf
-echo "net.ipv4.tcp_wmem=4096 1048576 1048576" | sudo tee -a /etc/sysctl.conf
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
+# System optimizations
+optimize_system() {
+    echo "[+] Applying system optimizations..."
+    cat <<EOL | sudo tee /etc/sysctl.d/99-squid-optimization.conf > /dev/null
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+net.ipv4.tcp_window_scaling=1
+net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_no_metrics_save=1
+net.ipv4.tcp_low_latency=1
+net.ipv4.ip_forward=1
+EOL
+    sudo sysctl -p /etc/sysctl.d/99-squid-optimization.conf
+}
 
-# Initialize Squid
-echo "[+] Initializing Squid..."
-sudo squid -z 2>/dev/null || true
+# Main execution
+main() {
+    # Get main IP if not set
+    if [ -z "$PROXY_IP" ]; then
+        MAIN_IP=$(hostname -I | awk '{print $1}')
+    else
+        MAIN_IP="$PROXY_IP"
+    fi
 
-# Restart Squid
-echo "[+] Restarting services..."
-sudo systemctl restart squid
+    # 1. Complete removal
+    remove_squid
 
-# Allow firewall port
-sudo ufw allow "$PROXY_PORT/tcp" >/dev/null 2>&1 || true
+    # 2. Fresh install
+    install_squid
 
-# Completion
-echo -e "\n[✅] ULTRA-FAST SQUID PROXY SETUP COMPLETE!"
-echo -e "========================================="
-echo -e "Proxy Details:"
-echo -e "Address: $MAIN_IP"
-echo -e "Port: $PROXY_PORT"
-echo -e "Username: $PROXY_USER"
-echo -e "Password: $PROXY_PASSWORD"
-echo -e "========================================="
-echo -e "Test with:"
-echo -e "curl -x http://$PROXY_USER:$PROXY_PASSWORD@$MAIN_IP:$PROXY_PORT http://ifconfig.me"
-echo -e "\nNote: Running in full passthrough mode for maximum speed"
+    # 3. Configure
+    configure_squid
+
+    # 4. System optimizations
+    optimize_system
+
+    # Initialize and start
+    echo "[+] Initializing Squid..."
+    sudo squid -z 2>/dev/null || true
+    
+    echo "[+] Starting Squid service..."
+    sudo systemctl start squid
+    sudo systemctl enable squid
+
+    # Firewall
+    sudo ufw allow "$PROXY_PORT/tcp" >/dev/null 2>&1 || true
+
+    # Verification
+    echo -e "\n[✅] FRESH SQUID INSTALLATION COMPLETE!"
+    echo -e "========================================="
+    echo -e "Proxy Details:"
+    echo -e "Address: $MAIN_IP"
+    echo -e "Port: $PROXY_PORT"
+    echo -e "Username: $PROXY_USER"
+    echo -e "Password: $PROXY_PASSWORD"
+    echo -e "========================================="
+    echo -e "Test with:"
+    echo -e "curl -x http://$PROXY_USER:$PROXY_PASSWORD@$MAIN_IP:$PROXY_PORT http://ifconfig.me"
+    echo -e "\nCheck status: sudo systemctl status squid"
+}
+
+# Execute main function
+main
