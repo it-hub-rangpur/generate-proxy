@@ -32,8 +32,10 @@ echo "[+] Creating optimized configuration..."
 cat <<EOL | sudo tee "$SQUID_CONF" > /dev/null
 http_port $MAIN_IP:$PROXY_PORT
 
-# Disable caching to maximize speed
+# COMPLETE DISABLE CACHING - PASSTHROUGH MODE
 cache deny all
+maximum_object_size 0 KB
+minimum_object_size 0 KB
 
 # Authentication
 auth_param basic program /usr/lib/squid/basic_ncsa_auth $PASSWORD_FILE
@@ -45,21 +47,16 @@ http_access deny all
 # Performance tuning
 max_filedescriptors 65535
 workers 4
-# 1MB socket buffers
-tcp_outgoing_address $MAIN_IP
-tcp_recv_bufsize 1048576
-tcp_send_bufsize 1048576
 
-# Timeouts (in milliseconds)
+# Timeouts (shorter for better performance)
 forward_timeout 30 seconds
-connect_timeout 20 seconds
+connect_timeout 15 seconds
 read_timeout 300 seconds
-request_timeout 60 seconds
-persistent_request_timeout 60 seconds
 client_lifetime 1 hour
-half_closed_clients off
 
 # Security headers
+via off
+forwarded_for delete
 request_header_access Via deny all
 request_header_access X-Forwarded-For deny all
 request_header_access Referer deny all
@@ -88,11 +85,12 @@ echo "net.core.rmem_max=1048576" | sudo tee -a /etc/sysctl.conf
 echo "net.core.wmem_max=1048576" | sudo tee -a /etc/sysctl.conf
 echo "net.ipv4.tcp_rmem=4096 1048576 1048576" | sudo tee -a /etc/sysctl.conf
 echo "net.ipv4.tcp_wmem=4096 1048576 1048576" | sudo tee -a /etc/sysctl.conf
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 
 # Initialize Squid
 echo "[+] Initializing Squid..."
-sudo squid -z
+sudo squid -z 2>/dev/null || true
 
 # Restart Squid
 echo "[+] Restarting services..."
@@ -102,7 +100,7 @@ sudo systemctl restart squid
 sudo ufw allow "$PROXY_PORT/tcp" >/dev/null 2>&1 || true
 
 # Completion
-echo -e "\n[✅] OPTIMIZED SQUID PROXY SETUP COMPLETE!"
+echo -e "\n[✅] ULTRA-FAST SQUID PROXY SETUP COMPLETE!"
 echo -e "========================================="
 echo -e "Proxy Details:"
 echo -e "Address: $MAIN_IP"
@@ -112,4 +110,4 @@ echo -e "Password: $PROXY_PASSWORD"
 echo -e "========================================="
 echo -e "Test with:"
 echo -e "curl -x http://$PROXY_USER:$PROXY_PASSWORD@$MAIN_IP:$PROXY_PORT http://ifconfig.me"
-echo -e "\nNote: Caching has been disabled for maximum speed"
+echo -e "\nNote: Running in full passthrough mode for maximum speed"
